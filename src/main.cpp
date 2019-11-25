@@ -18,9 +18,9 @@
  */
 
 #include <IotWebConf.h>
+#include <EasyButton.h>
 
 
-void handleRoot();
 
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const char thingName[] = "touchThing";
@@ -38,6 +38,10 @@ const char wifiInitialApPassword[] = "makkaraperuna";
 //      password to buld an AP. (E.g. in case of lost password)
 #define CONFIG_PIN 35
 
+// -- AP SETUP_PIN is pulled to ground on startup for 5 seconds, the Thing will start
+//    a captive portal where you can configure the device.
+#define SETUP_PIN 0
+
 // -- Status indicator pin.
 //      First it will light up (kept LOW), on Wifi connection it will blink,
 //      when connected to the Wifi it will turn off (kept HIGH).
@@ -45,15 +49,13 @@ const char wifiInitialApPassword[] = "makkaraperuna";
 
 // -- Callback method declarations.
 void configSaved();
-boolean formValidator();
 
 DNSServer dnsServer;
 WebServer server(80);
 
+// -- MIDI Values for device
 char pitchValue[NUMBER_LEN];
 char velocityValue[NUMBER_LEN];
-char intParamValue[NUMBER_LEN];
-
 
 IotWebConf iotWebConf(thingName, &dnsServer, &server, wifiInitialApPassword, CONFIG_VERSION);
 IotWebConfSeparator pitchSeperator = IotWebConfSeparator("Note Number (21 - 108)");
@@ -62,15 +64,25 @@ IotWebConfParameter pitchParam = IotWebConfParameter("Pitch", "pitchParam", pitc
 IotWebConfSeparator velocitySeperator = IotWebConfSeparator("Velocity or Loudness (0-127)");
 IotWebConfParameter velocityParam = IotWebConfParameter("Velocity", "velocityParam", velocityValue, NUMBER_LEN, "number", "1..127", NULL, "min='1' max='127' step='1'");
 
+IotWebConfParameter value = IotWebConfParameter();
+
+EasyButton button(SETUP_PIN);
+
+// Callback function to be called when the button is pressed.
+void onPressedForDuration();
+
+int period = 1000;
+unsigned long time_now = 0;
+
 void setup() 
 {
   Serial.begin(115200);
   Serial.println();
   Serial.println("Starting up...");
-  
+
 
   iotWebConf.setStatusPin(STATUS_PIN);
-  iotWebConf.setConfigPin(CONFIG_PIN);
+  //iotWebConf.setConfigPin(CONFIG_PIN);
   iotWebConf.addParameter(&pitchSeperator);
   iotWebConf.addParameter(&pitchParam);
   iotWebConf.addParameter(&velocitySeperator);
@@ -80,6 +92,9 @@ void setup()
 
   // -- Initializing the configuration.
   iotWebConf.init();
+
+  button.begin();
+  button.onPressedFor(1000, onPressedForDuration);
 
   // -- Set up required URL handlers on the web server.
   server.on("/", []{ iotWebConf.handleConfig(); });
@@ -92,6 +107,7 @@ void loop()
 {
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
+  button.read();
 }
 
 
@@ -100,3 +116,9 @@ void configSaved()
   Serial.println("Configuration was updated.");
 }
 
+void onPressedForDuration() {
+  Serial.println("Setup button has been pressed!");
+
+  iotWebConf.init();
+
+}
