@@ -18,9 +18,8 @@
  */
 
 #include <IotWebConf.h>
-
-
-void handleRoot();
+#include <EasyButton.h>
+#include <EEPROM.h>
 
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const char thingName[] = "touchThing";
@@ -37,6 +36,10 @@ const char wifiInitialApPassword[] = "makkaraperuna";
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
 #define CONFIG_PIN 35
+
+// -- AP SETUP_PIN is pulled to ground on startup for 5 seconds, the Thing will start
+//    a captive portal where you can configure the device.
+#define SETUP_PIN 0
 
 // -- Status indicator pin.
 //      First it will light up (kept LOW), on Wifi connection it will blink,
@@ -62,6 +65,11 @@ IotWebConfParameter pitchParam = IotWebConfParameter("Pitch", "pitchParam", pitc
 IotWebConfSeparator velocitySeperator = IotWebConfSeparator("Velocity or Loudness (0-127)");
 IotWebConfParameter velocityParam = IotWebConfParameter("Velocity", "velocityParam", velocityValue, NUMBER_LEN, "number", "1..127", NULL, "min='1' max='127' step='1'");
 
+EasyButton button(SETUP_PIN);
+
+
+void configServerCallback();
+
 void setup() 
 {
   Serial.begin(115200);
@@ -70,7 +78,7 @@ void setup()
   
 
   iotWebConf.setStatusPin(STATUS_PIN);
-  iotWebConf.setConfigPin(CONFIG_PIN);
+  //iotWebConf.setConfigPin(CONFIG_PIN);
   iotWebConf.addParameter(&pitchSeperator);
   iotWebConf.addParameter(&pitchParam);
   iotWebConf.addParameter(&velocitySeperator);
@@ -81,9 +89,8 @@ void setup()
   // -- Initializing the configuration.
   iotWebConf.init();
 
-  // -- Set up required URL handlers on the web server.
-  server.on("/", []{ iotWebConf.handleConfig(); });
-  server.onNotFound([](){ iotWebConf.handleNotFound(); });
+  // -- Initizlizing setup button
+  button.onPressedFor(5000, configServerCallback);
 
   Serial.println("Ready.");
 }
@@ -92,6 +99,7 @@ void loop()
 {
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
+  button.read();
 }
 
 
@@ -100,3 +108,12 @@ void configSaved()
   Serial.println("Configuration was updated.");
 }
 
+void configServerCallback() 
+{
+  Serial.println("Starting Config Server.");
+  // -- Set up required URL handlers on the web server.
+  iotWebConf.forceApMode();
+  
+  server.on("/", []{ iotWebConf.handleConfig(); });
+  server.onNotFound([](){ iotWebConf.handleNotFound(); });
+}
