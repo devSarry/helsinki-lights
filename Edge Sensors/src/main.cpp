@@ -19,6 +19,7 @@
 
 #include <IotWebConf.h>
 #include <EasyButton.h>
+#include <EEPROM.h>
 
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const char thingName[] = "touchThing";
@@ -66,6 +67,9 @@ IotWebConfParameter velocityParam = IotWebConfParameter("Velocity", "velocityPar
 
 EasyButton button(SETUP_PIN);
 
+
+void configServerCallback();
+
 void setup() 
 {
   Serial.begin(115200);
@@ -74,7 +78,7 @@ void setup()
   
 
   iotWebConf.setStatusPin(STATUS_PIN);
-  iotWebConf.setConfigPin(CONFIG_PIN);
+  //iotWebConf.setConfigPin(CONFIG_PIN);
   iotWebConf.addParameter(&pitchSeperator);
   iotWebConf.addParameter(&pitchParam);
   iotWebConf.addParameter(&velocitySeperator);
@@ -87,8 +91,6 @@ void setup()
 
   // -- Initizlizing setup button
   button.onPressedFor(5000, configServerCallback);
-
-
 
   Serial.println("Ready.");
 }
@@ -110,6 +112,8 @@ void configServerCallback()
 {
   Serial.println("Starting Config Server.");
   // -- Set up required URL handlers on the web server.
+  iotWebConf.forceApMode();
+  
   server.on("/", []{ iotWebConf.handleConfig(); });
   server.onNotFound([](){ iotWebConf.handleNotFound(); });
 }
