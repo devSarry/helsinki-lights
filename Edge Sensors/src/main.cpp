@@ -1,5 +1,3 @@
-
-
 /**
  * Description:
  *   The sensor will have 2 operating modes.
@@ -19,7 +17,9 @@
 
 #include <IotWebConf.h>
 #include <EasyButton.h>
-#include <EEPROM.h>
+#include <EasyButtonTouch.h>
+#include <WifiConfigManager.h>
+#include <espnow.h>
 
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const char thingName[] = "touchThing";
@@ -55,27 +55,34 @@ WebServer server(80);
 
 char pitchValue[NUMBER_LEN];
 char velocityValue[NUMBER_LEN];
-char intParamValue[NUMBER_LEN];
-
+char thresholdStr[NUMBER_LEN] = "50";
 
 IotWebConf iotWebConf(thingName, &dnsServer, &server, wifiInitialApPassword, CONFIG_VERSION);
 IotWebConfSeparator pitchSeperator = IotWebConfSeparator("Note Number (21 - 108)");
 IotWebConfParameter pitchParam = IotWebConfParameter("Pitch", "pitchParam", pitchValue, NUMBER_LEN, "number", "1..127", NULL, "min='1' max='127' step='1'");
 
-IotWebConfSeparator velocitySeperator = IotWebConfSeparator("Velocity or Loudness (0-127)");
+IotWebConfSeparator velocitySeperator = IotWebConfSeparator("Velocity or Loudness (0 - 127)");
 IotWebConfParameter velocityParam = IotWebConfParameter("Velocity", "velocityParam", velocityValue, NUMBER_LEN, "number", "1..127", NULL, "min='1' max='127' step='1'");
 
-EasyButton button(SETUP_PIN);
+IotWebConfSeparator touchSeperator = IotWebConfSeparator("Touch Sensitivity (0-127)");
+IotWebConfParameter touchParam = IotWebConfParameter("Touch", "touchParam", thresholdStr, NUMBER_LEN, "number", "50", NULL, "min='1' max='127' step='1'");
 
+EasyButton button(SETUP_PIN);
+EasyButtonTouch touchPad(27, 35, atoi(thresholdStr));
 
 void configServerCallback();
+void touchPadPressedCallback();
+
+bool ledState = false;
 
 void setup() 
 {
   Serial.begin(115200);
   Serial.println();
   Serial.println("Starting up...");
-  
+  pinMode(17, OUTPUT);
+  digitalWrite(17, false);
+
 
   iotWebConf.setStatusPin(STATUS_PIN);
   //iotWebConf.setConfigPin(CONFIG_PIN);
@@ -83,6 +90,8 @@ void setup()
   iotWebConf.addParameter(&pitchParam);
   iotWebConf.addParameter(&velocitySeperator);
   iotWebConf.addParameter(&velocityParam);
+  iotWebConf.addParameter(&touchSeperator);
+  iotWebConf.addParameter(&touchParam);
   iotWebConf.setConfigSavedCallback(&configSaved);
   iotWebConf.getApTimeoutParameter()->visible = true;
 
@@ -90,7 +99,15 @@ void setup()
   iotWebConf.init();
 
   // -- Initizlizing setup button
+  button.begin();
   button.onPressedFor(5000, configServerCallback);
+  touchPad.begin();
+  touchPad.onPressed(touchPadPressedCallback);
+
+
+  server.on("/", []{ iotWebConf.handleConfig(); });
+  server.onNotFound([](){ iotWebConf.handleNotFound(); });
+
 
   Serial.println("Ready.");
 }
@@ -100,6 +117,7 @@ void loop()
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
   button.read();
+  touchPad.read();
 }
 
 
@@ -113,7 +131,13 @@ void configServerCallback()
   Serial.println("Starting Config Server.");
   // -- Set up required URL handlers on the web server.
   iotWebConf.forceApMode();
-  
-  server.on("/", []{ iotWebConf.handleConfig(); });
-  server.onNotFound([](){ iotWebConf.handleNotFound(); });
+}
+
+void touchPadPressedCallback() 
+{
+  ledState = !ledState;
+
+  Serial.println("Button pressed ");
+
+  digitalWrite(17, ledState);
 }
