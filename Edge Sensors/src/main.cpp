@@ -2,29 +2,35 @@
 #include <esp_now.h>
 #include <WifiEspNow.h>
 #include <WiFi.h>
+#include <EasyButtonTouch.h>
 
-// Global copy of slave
+#define CHANNEL 1
+
+static uint8_t PEER[] {0x30, 0xAE, 0xA4, 0x28, 0x82, 0x75};
 esp_now_peer_info_t slave;
-#define CHANNEL 3
-#define PRINTSCANRESULTS 0
-#define DELETEBEFOREPAIR 0
 
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
-void sendData();
-void deletePeer();
-bool manageSlave();
-void ScanForSlave();
+struct Config {
+} config;
+
+struct Metadata {
+    int8_t version;
+} meta;
+
+ConfigManager configManager;
+
 void InitESPNow();
+void ScanForSlave();
+bool manageSlave();
+void sendData();
 
-
-// Init ESP Now with fallback
 void InitESPNow() {
-  WiFi.disconnect();
-  bool ok = WifiEspNow.begin();
-  if (!ok) {
-    Serial.println("WifiEspNow.begin() failed");
-    ESP.restart();
-  }
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("ESPNOW", nullptr, 3);
+  WiFi.softAPdisconnect(false);
+
+  Serial.print("MAC address of this node is ");
+  Serial.println(WiFi.softAPmacAddress());
 }
 
 // Scan for slaves in AP mode
@@ -44,16 +50,6 @@ void ScanForSlave() {
       String SSID = WiFi.SSID(i);
       int32_t RSSI = WiFi.RSSI(i);
       String BSSIDstr = WiFi.BSSIDstr(i);
-
-      if (PRINTSCANRESULTS) {
-        Serial.print(i + 1);
-        Serial.print(": ");
-        Serial.print(SSID);
-        Serial.print(" (");
-        Serial.print(RSSI);
-        Serial.print(")");
-        Serial.println("");
-      }
       delay(10);
       // Check if the current device starts with `Slave`
       if (SSID.indexOf("Slave") == 0) {
@@ -89,17 +85,15 @@ void ScanForSlave() {
   WiFi.scanDelete();
 }
 
+
 // Check if the slave is already paired with the master.
 // If not, pair the slave with master
 bool manageSlave() {
   if (slave.channel == CHANNEL) {
-    if (DELETEBEFOREPAIR) {
-      deletePeer();
-    }
 
     Serial.print("Slave Status: ");
     // check if the peer exists
-    bool exists = esp_now_is_peer_exist(slave.peer_addr);
+    bool exists = WifiEspNow.hasPeer(slave.peer_addr);
     if ( exists) {
       // Slave already paired.
       Serial.println("Already Paired");
@@ -119,115 +113,92 @@ bool manageSlave() {
   }
 }
 
-void deletePeer() {
-  esp_err_t delStatus = esp_now_del_peer(slave.peer_addr);
-  Serial.print("Slave Delete Status: ");
-  if (delStatus == ESP_OK) {
-    // Delete success
-    Serial.println("Success");
-  } else if (delStatus == ESP_ERR_ESPNOW_NOT_INIT) {
-    // How did we get so far!!
-    Serial.println("ESPNOW Not Init");
-  } else if (delStatus == ESP_ERR_ESPNOW_ARG) {
-    Serial.println("Invalid Argument");
-  } else if (delStatus == ESP_ERR_ESPNOW_NOT_FOUND) {
-    Serial.println("Peer not found.");
-  } else {
-    Serial.println("Not sure what happened");
-  }
-}
-
-
 void sendData() {
-    const uint8_t *peer_addr = slave.peer_addr;
+    unsigned int timeout_ms = 5000;
     char msg[60];
-    int len = snprintf(msg, sizeof(msg), "hello ESP-NOW from %s at %lu", WiFi.softAPmacAddress().c_str(), millis());
-    WifiEspNow.send(slave.peer_addr, reinterpret_cast<const uint8_t*>(msg), len);
+
+    char pitch[MIDI_LENGTH];
+    char velocity[MIDI_LENGTH];
+
+    DebugPrintln(F("Reading saved configuration"));
+
+    EEPROM.get(MAGIC_LENGTH, pitch);
+    EEPROM.get(MAGIC_LENGTH, velocity);
+    int len = snprintf(msg, sizeof(msg), "%s %s : %lu", pitch, velocity, millis());
+
+    if (WifiEspNow.hasPeer(slave.peer_addr)) {
+      WifiEspNow.send(slave.peer_addr, reinterpret_cast<const uint8_t*>(msg), len);
+    }
     Serial.print("Sending: "); Serial.println(msg);
+
+    WifiEspNowSendStatus status;
+    unsigned long starttime = millis();
+    do {
+        status = WifiEspNow.getSendStatus();
+        yield();
+    } while ((status == WifiEspNowSendStatus::NONE) && ((millis() - starttime) < timeout_ms));
+
+    if (status == WifiEspNowSendStatus::OK) {
+      Serial.println("Message Sent succesfully");
+    } else {
+      Serial.println("Message wasn't received.");
+    }
+
 }
 
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
-           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
-  Serial.print("Last Packet Sent to: "); Serial.println(macStr);
-  Serial.print("Last Packet Send Status: "); Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-}
-
-struct Config {
-    char name[20];
-    bool enabled;
-    int8_t hour;
-    char password[20];
-} config;
-
-struct Metadata {
-    int8_t version;
-} meta;
-
-ConfigManager configManager;
-
-void createCustomRoute(WebServer *server) {
-    server->on("/custom", HTTPMethod::HTTP_GET, [server](){
-        server->send(200, "text/plain", "Hello, World!");
-    });
+void printReceivedMessage(const uint8_t mac[6], const uint8_t* buf, size_t count, void* cbarg) {
+  Serial.printf("Message from %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  for (int i = 0; i < count; ++i) {
+    Serial.print(static_cast<char>(buf[i]));
+  }
+  Serial.println();
 }
 
 void setup() {
-    DEBUG_MODE = true; // will enable debugging and log to serial monitor
-    Serial.begin(115200);
-    DebugPrintln("");
+  DEBUG_MODE = true; // will enable debugging and log to serial monitor
+  Serial.begin(115200);
+  DebugPrintln("");
 
-    meta.version = 3;
+  meta.version = 3;
 
-    // Setup config manager
-    configManager.setAPName("Demo");
-    configManager.setAPFilename("/index.html");
-    configManager.addParameter("penis ", config.name, 20);
-    configManager.addParameter("enabled", &config.enabled);
-    configManager.addParameter("hour", &config.hour);
-    configManager.addParameter("password", config.password, 20, set);
-    configManager.addParameter("version", &meta.version, get);
+  // Setup config manager
+  configManager.setAPName("Demo");
+  configManager.setAPFilename("/index.html");
 
-    configManager.setAPCallback(createCustomRoute);
-    configManager.setAPICallback(createCustomRoute);
 
-    configManager.begin(config);
-    //Set device in STA mode to begin with
-    WiFi.mode(WIFI_STA);
-    Serial.println("ESPNow/Basic/Master Example");
-    // This is the mac address of the Master in Station Mode
-    Serial.print("STA MAC: "); Serial.println(WiFi.macAddress());
-    // Init ESPNow with a fallback logic
-    
-    InitESPNow();
-    // Once ESPNow is successfully Init, we will register for Send CB to
-    // get the status of Trasnmitted packet
-    esp_now_register_send_cb(OnDataSent);
+  configManager.begin(config);
+  Serial.println();
+
+  InitESPNow();
+
+  bool ok = WifiEspNow.begin();
+  if (!ok) {
+    Serial.println("WifiEspNow.begin() failed");
+    ESP.restart();
+  }
+
+
+  ok = WifiEspNow.addPeer(PEER);
+  if (!ok) {
+    Serial.println("WifiEspNow.addPeer() failed");
+    ESP.restart();
+  }
 }
 
 void loop() {
-    configManager.loop();
-
-    // Add your loop code here
-    ScanForSlave();
-    // If Slave is found, it would be populate in `slave` variable
-    // We will check if `slave` is defined and then we proceed further
-    if (slave.channel == CHANNEL) { // check if slave channel is defined
-    // `slave` is defined
-    // Add slave as peer if it has not been added already
+  
+  if (slave.channel == CHANNEL) {
     bool isPaired = manageSlave();
+
     if (isPaired) {
-        // pair success or already paired
-        // Send data to device
-        sendData();
-    } else {
-        // slave pair failed
-        Serial.println("Slave pair failed!");
+      sendData();
     }
-    }
-    else {
-    // No slave found to process
-    }
-    delay(3000);
+
+
+    delay(1000);
+  } else {
+    ScanForSlave();
+  }
+
+
 }
