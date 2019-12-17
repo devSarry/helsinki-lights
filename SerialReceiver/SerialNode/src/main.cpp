@@ -43,8 +43,13 @@ void printReceivedMessage(const uint8_t mac[6], const uint8_t* buf, size_t count
 
 void printReceivedMessage(const uint8_t mac[6], const uint8_t* buf, size_t count, void* cbarg) {
   Serial.printf("Message from %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  char token = ' '; 
   for (int i = 0; i < count; ++i) {
-    Serial.print(static_cast<char>(buf[i]));
+    if(static_cast<char>(buf[i]) == token) {
+      Serial.println();
+    } else {
+      Serial.print(static_cast<char>(buf[i]));
+    }
   }
   Serial.println();
 }

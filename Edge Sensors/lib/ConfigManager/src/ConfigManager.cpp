@@ -129,6 +129,8 @@ void ConfigManager::handleAPPost() {
 
     server->send(204, FPSTR(mimePlain), F("Saved. Will attempt to reboot."));
 
+    ESP.restart();
+
 }
 
 void ConfigManager::handleScanGet() {
