@@ -28,13 +28,21 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <WifiEspNow.h>
-
+#include <MIDI.h>
 
 #define CHANNEL 1
 
+#define SERIALMIDI_BAUD_RATE  115200
 
-static uint8_t PEER[] {0x30, 0xAE, 0xA4, 0x28, 0x82, 0x75};
+struct SerialMIDISettings : public midi::DefaultSettings
+{
+  static const long BaudRate = SERIALMIDI_BAUD_RATE;
+};
 
+HardwareSerial                SerialMIDI(0);
+
+
+MIDI_CREATE_CUSTOM_INSTANCE(HardwareSerial, SerialMIDI, MIDI, SerialMIDISettings);
 
 void InitESPNow();
 void configDeviceAP();
@@ -42,16 +50,44 @@ void printReceivedMessage(const uint8_t mac[6], const uint8_t* buf, size_t count
 
 
 void printReceivedMessage(const uint8_t mac[6], const uint8_t* buf, size_t count, void* cbarg) {
-  Serial.printf("Message from %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  char token = ' '; 
+  int delimiterCount = 0;
+
+  int status = 0;
+  int pitch = 0;
+  int velocity = 0;
+
+  char messageBuffer[40];
   for (int i = 0; i < count; ++i) {
-    if(static_cast<char>(buf[i]) == token) {
-      Serial.println();
-    } else {
-      Serial.print(static_cast<char>(buf[i]));
-    }
+    messageBuffer[i] = static_cast<char>(buf[i]);
+    //Serial.print(static_cast<char>(buf[i]));
   }
+
+  char * pch;
+  pch = strtok (messageBuffer," ");
+  while (pch != NULL)
+  {
+
+    if(delimiterCount == 0) {
+      status = atoi(pch);
+    }
+    if(delimiterCount == 1) {
+      pitch = atoi(pch);
+    }
+    if(delimiterCount == 2) {
+      velocity = atoi(pch);
+    }
+    pch = strtok (NULL, " ");
+    delimiterCount++;
+  }
+
   Serial.println();
+  if(status == 128) {
+      MIDI.sendNoteOff(pitch, velocity,1);
+  }
+  if(status == 144) {
+      MIDI.sendNoteOn(pitch, velocity, 1);
+  }
+
 }
 
 // Init ESP Now with fallback
@@ -86,7 +122,7 @@ void configDeviceAP() {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(SERIALMIDI_BAUD_RATE);
   Serial.println("ESPNow/Basic/Slave Example");
   //Set device in AP mode to begin with
   WiFi.mode(WIFI_AP);
@@ -100,11 +136,14 @@ void setup() {
   // get recv packer info.
   Serial.println("Register received callback");
 
+  MIDI.begin(MIDI_CHANNEL_OMNI);  // Listen to all incoming messages
+
   WifiEspNow.onReceive(printReceivedMessage, nullptr);
 }
 
 
 
 void loop() {
-  // Chill
+     // Read incoming messages
+     MIDI.read();
 }
